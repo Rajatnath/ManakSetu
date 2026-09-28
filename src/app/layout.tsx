@@ -3,7 +3,7 @@ import './globals.css';
 import { AccessibilityProvider } from '@/components/layout/AccessibilityProvider';
 
 export const metadata: Metadata = {
-  title: 'ManakSetu | Standards Intelligence System',
+  title: 'ManakSetu | Standards Intelligence Engine',
   description: 'AI-Powered Indian Standards Recommendation Engine',
 };
 

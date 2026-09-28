@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // pdfjs-dist must run as real Node code (it resolves its worker build at
+  // runtime); bundling it breaks text extraction.
+  serverExternalPackages: ["pdfjs-dist"],
 };
 
 export default nextConfig;

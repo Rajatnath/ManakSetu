@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Web Request with Redis Cache Miss",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [960, 480],
+    "views": [
+      { "id": "cache-check", "label": "Cache check", "focus": ["browser", "api", "redis"], "note": "Request hits the API cache lookup." },
+      { "id": "miss-fill", "label": "Miss fill", "focus": ["api", "redis", "postgres"], "note": "Miss falls back to Postgres, then fills Redis." }
+    ]
+  },
+  "participants": [
+    { "id": "browser", "type": "external", "label": "Browser", "sublabel": "web client" },
+    { "id": "api", "type": "backend", "label": "API", "sublabel": "handler" },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "cache" },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "source of truth" }
+  ],
+  "segments": [
+    { "from": 150, "to": 240, "label": "Cache check" },
+    { "from": 250, "to": 395, "label": "Miss fallback + fill" }
+  ],
+  "messages": [
+    { "id": "http-get", "from": "browser", "to": "api", "y": 168, "label": "GET /api/data", "variant": "emphasis" },
+    { "id": "cache-get", "from": "api", "to": "redis", "y": 202, "label": "GET cache key", "variant": "default" },
+    { "id": "cache-miss", "from": "redis", "to": "api", "y": 232, "label": "miss", "variant": "return" },
+    { "id": "db-query", "from": "api", "to": "postgres", "y": 268, "label": "query rows", "variant": "emphasis" },
+    { "id": "db-rows", "from": "postgres", "to": "api", "y": 298, "label": "rows", "variant": "return" },
+    { "id": "cache-set", "from": "api", "to": "redis", "y": 336, "label": "SET cache + TTL", "variant": "dashed" },
+    { "id": "http-ok", "from": "api", "to": "browser", "y": 372, "label": "200 JSON", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "api", "from": 168, "to": 379, "type": "backend" },
+    { "participant": "redis", "from": 197, "to": 238, "type": "database" },
+    { "participant": "postgres", "from": 263, "to": 304, "type": "database" },
+    { "participant": "redis", "from": 331, "to": 353, "type": "database" }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Cache-miss path",
+      "items": [
+        "API checks Redis first; miss is an explicit return",
+        "Postgres queried only after miss; SET fills cache before 200"
+      ]
+    }
+  ]
+}

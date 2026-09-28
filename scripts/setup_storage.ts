@@ -8,7 +8,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 async function setupBucket() {
-  const { data, error } = await supabase.storage.createBucket('tenders', {
+  const { error } = await supabase.storage.createBucket('tenders', {
     public: false,
     allowedMimeTypes: ['application/pdf'],
     fileSizeLimit: 52428800 // 50MB
@@ -17,6 +17,16 @@ async function setupBucket() {
     console.error('Bucket creation failed:', error.message);
   } else {
     console.log('Bucket "tenders" is ready!');
+  }
+
+  // Provenance sidecars (JSON) live here — the tenders bucket is PDF-only.
+  const { error: metaError } = await supabase.storage.createBucket('tender-meta', {
+    public: false,
+  });
+  if (metaError && metaError.message !== 'The resource already exists') {
+    console.error('Bucket tender-meta creation failed:', metaError.message);
+  } else {
+    console.log('Bucket "tender-meta" is ready!');
   }
 }
 setupBucket();

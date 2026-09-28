@@ -1,5 +1,6 @@
 import Header from '@/components/layout/Header';
 import FileUploader from '@/components/upload/FileUploader';
+import LandingInfo from '@/components/upload/LandingInfo';
 
 export default function Home() {
   return (
@@ -8,12 +9,13 @@ export default function Home() {
 
       {/* Main Content */}
       <div className="flex-grow flex flex-col items-center justify-center p-4 md:p-8">
+        <LandingInfo />
         <FileUploader />
       </div>
       
       {/* Footer */}
       <footer className="p-4 text-center text-text-secondary text-sm border-t border-border-primary bg-surface mt-auto">
-        &copy; {new Date().getFullYear()} Government of India. All rights reserved.
+        Prototype developed for Smart India Hackathon 2026 • SIH26108
       </footer>
     </main>
   );

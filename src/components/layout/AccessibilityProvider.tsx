@@ -1,6 +1,7 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { en, hi, DictKey } from '@/lib/i18n/dictionary';
 
 type TextSize = 'normal' | 'large' | 'xlarge';
 type Language = 'en' | 'hi';
@@ -15,6 +16,7 @@ interface AccessibilityContextType {
   readAloud: (text: string) => void;
   stopReadAloud: () => void;
   isReading: boolean;
+  t: (key: DictKey) => string;
 }
 
 const AccessibilityContext = createContext<AccessibilityContextType | undefined>(undefined);
@@ -65,13 +67,17 @@ export function AccessibilityProvider({ children }: { children: React.ReactNode 
     }
   };
 
+  const t = useCallback((key: DictKey) => {
+    return language === 'hi' ? hi[key] : en[key];
+  }, [language]);
+
   return (
     <AccessibilityContext.Provider value={{
       textSize, setTextSize,
       highContrast, setHighContrast,
       language, setLanguage,
       readAloud, stopReadAloud,
-      isReading
+      isReading, t
     }}>
       {children}
     </AccessibilityContext.Provider>
