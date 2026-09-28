@@ -5,6 +5,7 @@ import { ShieldAlert, CheckCircle, ExternalLink, Network, FileSearch, Loader2, B
 import Link from 'next/link';
 import RelationshipGraph from '@/components/graph/RelationshipGraph';
 import SimilarityMeter from '@/components/standards/SimilarityMeter';
+import CoveragePanel from '@/components/coverage/CoveragePanel';
 import { useAccessibility } from '@/components/layout/AccessibilityProvider';
 
 interface Recommendation {
@@ -178,6 +179,8 @@ export default function RecommendationsClient({ tenderId }: { tenderId: string }
             <strong>Disclaimer:</strong> AI recommendations — requires technical/BIS verification. Ensure current BIS status before final procurement use.
           </p>
         </div>
+
+        <CoveragePanel tenderId={tenderId} onInspect={(id) => setSelectedRec(id)} />
 
         {includedCount > 0 && (
           <p className="text-sm text-text-secondary flex-shrink-0">{includedCount} of {recommendations.length} marked for inclusion in report.</p>

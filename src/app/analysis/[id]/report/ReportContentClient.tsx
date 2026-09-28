@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import SimilarityMeter from '@/components/standards/SimilarityMeter';
+import type { CoverageData } from '@/lib/coverage/buildCoverage';
 
 interface MatchedRequirement {
   req?: string;
@@ -97,11 +98,13 @@ export default function ReportContentClient({
   tenderName,
   recommendations,
   intelById,
+  coverage,
 }: {
   tenderId: string;
   tenderName: string;
   recommendations: ReportRecommendation[];
   intelById: Record<string, ReportIntel>;
+  coverage: CoverageData | null;
 }) {
   void tenderId;
 
@@ -150,10 +153,6 @@ export default function ReportContentClient({
               <dd className="text-slate-800 font-medium">{generatedOn}</dd>
             </div>
             <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Prototype</dt>
-              <dd className="text-slate-800 font-medium">SIH26108</dd>
-            </div>
-            <div>
               <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Report Type</dt>
               <dd className="text-slate-800">Standards Applicability Assessment</dd>
             </div>
@@ -168,7 +167,7 @@ export default function ReportContentClient({
           </dl>
 
           <p className="text-xs text-slate-500 mt-4">
-            SIH26108 Prototype — decision-support output, not a compliance determination.
+            Decision-support output, not a compliance determination.
           </p>
         </div>
 
@@ -230,9 +229,110 @@ export default function ReportContentClient({
           </section>
         )}
 
-        {/* 3. Detailed included sections */}
+        {/* 3. Standards applicability & coverage */}
+        {coverage && (
+          <section className="px-8 py-6 border-b border-slate-200">
+            <h2 className="text-lg font-bold text-[#12355B] mb-4">3. Standards Applicability &amp; Coverage</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 text-sm">
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#1A5FB4] mb-1">Tender Requirements Analyzed</p>
+                <p className="text-xl font-bold text-[#12355B]">{coverage.requirementCount}</p>
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#1A5FB4] mb-1">Explicit IS References Detected</p>
+                <p className="text-xl font-bold text-[#12355B]">{coverage.diff.citedCount}</p>
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#1A5FB4] mb-1">Candidate Standards Retrieved</p>
+                <p className="text-xl font-bold text-[#12355B]">{coverage.diff.identifiedCount}</p>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#1A5FB4] mb-1">Tender-Cited Standards</p>
+              {coverage.textUnavailable ? (
+                <p className="text-sm text-slate-600">Tender text could not be read for the citation scan.</p>
+              ) : coverage.explicitReferences.length === 0 ? (
+                <p className="text-sm text-slate-600">No explicit Indian Standard references detected in the tender.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {coverage.explicitReferences.map(ref => (
+                    <li key={ref.core} className="text-sm text-slate-700">
+                      <span className="font-bold text-[#12355B]">{ref.raw}</span>
+                      <span className="text-slate-500"> — page {ref.page}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-xs text-slate-500 mt-1 italic">Document-level observation only — not a compliance judgment.</p>
+            </div>
+
+            <div className="mb-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#1A5FB4] mb-1">ManakSetu-Identified Candidates</p>
+              {coverage.candidates.length === 0 ? (
+                <p className="text-sm text-slate-600">No candidates above the similarity threshold.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {coverage.candidates.map(c => (
+                    <li key={c.id} className="text-sm text-slate-700">
+                      <span className="font-bold text-[#12355B]">{c.standard_number}</span>
+                      <span className="text-slate-500"> — similarity {c.score.toFixed(2)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="mb-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#1A5FB4] mb-1">Candidates Not Explicitly Cited in Tender</p>
+              {(() => {
+                const uncited = coverage.candidates.filter(c => coverage.diff.uncitedCandidateIds.includes(c.id));
+                if (uncited.length === 0) {
+                  return <p className="text-sm text-slate-600">All identified candidates were explicitly cited in the tender.</p>;
+                }
+                return (
+                  <>
+                    <p className="text-sm text-slate-600 mb-2">
+                      {uncited.length} candidate standard{uncited.length === 1 ? ' was' : 's were'} identified by the engine but
+                      {uncited.length === 1 ? ' was' : ' were'} not explicitly referenced in the tender text. Discovery result — not a legal conclusion.
+                    </p>
+                    <ul className="space-y-2">
+                      {uncited.map(c => (
+                        <li key={c.id} className="text-sm text-slate-700 border-l-4 border-slate-300 pl-3">
+                          <span className="font-bold text-[#12355B]">{c.standard_number}</span>
+                          {c.reason ? <span> — {c.reason}</span> : null}
+                          <span className="block text-xs text-slate-500">Similarity {c.score.toFixed(2)} • Potentially applicable • Requires human verification</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                );
+              })()}
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#1A5FB4] mb-1">Related / Test Standards</p>
+              {coverage.relationships.length === 0 ? (
+                <p className="text-sm text-slate-600">No verified relationship recorded for these candidates.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {coverage.relationships.map((rel, i) => (
+                    <li key={i} className="text-sm text-slate-700">
+                      <span className="font-bold text-[#12355B]">{rel.from_number}</span>
+                      <span> → {rel.relationship_type.replace(/_/g, ' ')} → </span>
+                      <span className="font-bold text-[#12355B]">{rel.to_number}</span>
+                      <span className="block text-xs text-slate-500">Relationship: {rel.relationship_type.replace(/_/g, ' ')} • Verification: Verified</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* 4. Detailed included sections */}
         <section className="px-8 py-6 border-b border-slate-200">
-          <h2 className="text-lg font-bold text-[#12355B] mb-4">3. Standards Included in Report</h2>
+          <h2 className="text-lg font-bold text-[#12355B] mb-4">4. Standards Included in Report</h2>
 
           {included.length === 0 ? (
             <div className="p-4 border border-slate-200 bg-slate-50 text-slate-600 rounded-md text-sm">
@@ -332,10 +432,10 @@ export default function ReportContentClient({
           )}
         </section>
 
-        {/* 4. Pending list */}
+        {/* 5. Pending list */}
         {pending.length > 0 && (
           <section className="px-8 py-6 border-b border-slate-200">
-            <h2 className="text-lg font-bold text-[#12355B] mb-4">4. Standards Pending Human Review</h2>
+            <h2 className="text-lg font-bold text-[#12355B] mb-4">5. Standards Pending Human Review</h2>
             <ul className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {pending.map(rec => (
                 <li key={rec.id} className="border border-slate-200 rounded-md p-3 bg-white avoid-break">
@@ -352,7 +452,7 @@ export default function ReportContentClient({
         {needsVerification.length > 0 && (
           <section className="px-8 py-6 border-b border-slate-200">
             <h2 className="text-lg font-bold text-[#12355B] mb-4">
-              {pending.length > 0 ? '5' : '4'}. Standards Requiring Verification
+              {pending.length > 0 ? '6' : '5'}. Standards Requiring Verification
             </h2>
             <ul className="space-y-2">
               {needsVerification.map(rec => (
@@ -368,7 +468,7 @@ export default function ReportContentClient({
 
         {/* Report footer */}
         <div className="px-8 py-4 text-center">
-          <p className="text-xs text-slate-500">ManakSetu • SIH26108 Prototype</p>
+          <p className="text-xs text-slate-500">ManakSetu</p>
           <p className="text-xs text-slate-400">Decision-support output — not a compliance determination</p>
         </div>
       </div>

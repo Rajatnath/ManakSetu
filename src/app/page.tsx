@@ -15,7 +15,7 @@ export default function Home() {
       
       {/* Footer */}
       <footer className="p-4 text-center text-text-secondary text-sm border-t border-border-primary bg-surface mt-auto">
-        Prototype developed for Smart India Hackathon 2026 • SIH26108
+        ManakSetu • Indian Standards Intelligence for Procurement
       </footer>
     </main>
   );

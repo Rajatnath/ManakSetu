@@ -5,6 +5,7 @@ import ReportActionsClient from './ReportActionsClient';
 import ReportContentClient from './ReportContentClient';
 import { getStandardMetadata } from '@/data/standardsMetadata';
 import { getQcoRecord } from '@/data/qcoRecords';
+import { buildCoverage } from '@/lib/coverage/buildCoverage';
 
 interface Props {
   params: Promise<{
@@ -79,6 +80,14 @@ export default async function ReportPage(props: Props) {
     };
   }
 
+  // Standards coverage: explicit citations vs ManakSetu-identified candidates
+  let coverage = null;
+  try {
+    coverage = await buildCoverage(supabase, params.id);
+  } catch (e) {
+    console.warn('Coverage build failed (non-fatal):', (e as Error)?.message);
+  }
+
   return (
     <div className="min-h-screen bg-background-primary flex flex-col">
       <Header />
@@ -87,7 +96,7 @@ export default async function ReportPage(props: Props) {
         <ReportActionsClient tenderId={params.id} />
       </PageBar>
 
-      <ReportContentClient tenderId={params.id} tenderName={tender.filename} recommendations={recommendations} intelById={intelById} />
+      <ReportContentClient tenderId={params.id} tenderName={tender.filename} recommendations={recommendations} intelById={intelById} coverage={coverage} />
     </div>
   );
 }

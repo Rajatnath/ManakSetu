@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/normalize.test.ts tests/ocr-sufficiency.test.ts tests/metadata.test.ts tests/qco.test.ts tests/verified-relationships.test.ts tests/dictionary.test.ts",
+    "test": "node --test tests/normalize.test.ts tests/ocr-sufficiency.test.ts tests/metadata.test.ts tests/qco.test.ts tests/verified-relationships.test.ts tests/dictionary.test.ts tests/coverage.test.ts",
     "seed": "tsx scripts/seed_standards.ts",
     "normalize": "tsx scripts/normalize_requirements.ts",
     "seed:relationships": "tsx scripts/seed_verified_relationships.ts"

@@ -33,7 +33,6 @@ export default function Header() {
             <span className="font-normal opacity-80">{t('brandRest')}</span>
           </h1>
           <p className="text-sm opacity-80">{t('appSubtitle')}</p>
-          <span className="inline-block mt-1 text-xs bg-black/20 px-2 py-0.5 rounded">{t('prototypeBadge')}</span>
         </div>
       </div>
       <div className="flex flex-wrap gap-4 items-center justify-center">
