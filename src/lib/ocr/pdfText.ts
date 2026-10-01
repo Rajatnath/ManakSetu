@@ -1,4 +1,16 @@
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+// Static import so serverless file-tracing (@vercel/nft) includes the worker
+// build in the deployment. pdf.mjs otherwise loads it via a dynamic
+// `import(this.workerSrc)` with webpackIgnore/vite-ignore, which nft cannot
+// detect — hence "Cannot find module .../pdf.worker.mjs" on /var/task.
+// The worker module also sets `globalThis.pdfjsWorker`, letting pdf.mjs skip
+// the dynamic import entirely (see PDFWorker._setupFakeWorkerGlobal).
+// @ts-expect-error - pdfjs-dist ships no types for the worker build
+import { WorkerMessageHandler } from 'pdfjs-dist/legacy/build/pdf.worker.mjs';
+
+if (!(globalThis as any).pdfjsWorker?.WorkerMessageHandler) {
+  (globalThis as any).pdfjsWorker = { WorkerMessageHandler };
+}
 
 export interface PageText {
   page: number; // 1-based
