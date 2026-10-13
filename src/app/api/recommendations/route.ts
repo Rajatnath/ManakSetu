@@ -8,6 +8,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const SIMILARITY_THRESHOLD = 0.65;
 const TOP_K = 5;
+// Per-requirement cap: each requirement links only its strongest standards.
+// (A global threshold alone is not discriminating — in this embedding space
+// even unrelated pairs score ~0.66+, so every requirement matched everything.)
+const TOP_MATCHES_PER_REQUIREMENT = 3;
 
 export const REVIEW_STATUSES = ['pending', 'included', 'needs_verification'] as const;
 
@@ -58,31 +62,37 @@ export async function POST(request: Request) {
     const methodFor = (reqId: string): string | null =>
       (provenance?.requirementMethods?.[reqId] as string) || null;
 
-    // Match each requirement against all standards
+    // Match each requirement against its TOP strongest standards above the floor.
+    // A global threshold alone is not discriminating in this embedding space,
+    // so without the per-requirement cap every standard matched every requirement
+    // and all inclusions showed identical reason lists.
     reqs.forEach((req: any) => {
       // req.embedding might be a JSON array or string, parse it.
       const reqVec = typeof req.embedding === 'string' ? JSON.parse(req.embedding) : req.embedding;
       if (!reqVec || reqVec.length === 0) return;
 
-      standards.forEach((std: any) => {
-        const stdVec = typeof std.embedding === 'string' ? JSON.parse(std.embedding) : std.embedding;
-        if (!stdVec || stdVec.length === 0) return;
+      const scored = standards
+        .map((std: any) => {
+          const stdVec = typeof std.embedding === 'string' ? JSON.parse(std.embedding) : std.embedding;
+          if (!stdVec || stdVec.length === 0) return null;
+          return { std, sim: cosineSimilarity(reqVec, stdVec) };
+        })
+        .filter((x): x is { std: any; sim: number } => !!x && x.sim > SIMILARITY_THRESHOLD)
+        .sort((a, b) => b.sim - a.sim)
+        .slice(0, TOP_MATCHES_PER_REQUIREMENT);
 
-        const sim = cosineSimilarity(reqVec, stdVec);
-
-        if (sim > SIMILARITY_THRESHOLD) {
-          const match = { req: req.requirement, val: req.value, unit: req.unit, sim, source: req.source_text, page: req.page_number, method: methodFor(req.id) };
-          if (!recommendationsMap.has(std.id)) {
-            recommendationsMap.set(std.id, {
-              ...std,
-              maxSimilarity: sim,
-              matchedReqs: [match]
-            });
-          } else {
-            const current = recommendationsMap.get(std.id);
-            if (sim > current.maxSimilarity) current.maxSimilarity = sim;
-            current.matchedReqs.push(match);
-          }
+      scored.forEach(({ std, sim }) => {
+        const match = { req: req.requirement, val: req.value, unit: req.unit, sim, source: req.source_text, page: req.page_number, method: methodFor(req.id) };
+        if (!recommendationsMap.has(std.id)) {
+          recommendationsMap.set(std.id, {
+            ...std,
+            maxSimilarity: sim,
+            matchedReqs: [match]
+          });
+        } else {
+          const current = recommendationsMap.get(std.id);
+          if (sim > current.maxSimilarity) current.maxSimilarity = sim;
+          current.matchedReqs.push(match);
         }
       });
     });
