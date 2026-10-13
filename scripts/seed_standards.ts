@@ -2,8 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { parse } from 'csv-parse/sync';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as dotenv from 'dotenv';
+import { embedTexts } from '../src/lib/llm/mistral';
 
 // Load environment variables from .env or .env.local
 dotenv.config({ path: '.env.local' });
@@ -11,21 +11,20 @@ dotenv.config({ path: '.env' });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || '';
+const MISTRAL_EMBEDDING_MODEL = process.env.MISTRAL_EMBEDDING_MODEL || 'mistral-embed';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("❌ Missing Supabase URL or Service Role Key in environment variables.");
   process.exit(1);
 }
 
-if (!GEMINI_API_KEY) {
-  console.error("❌ Missing Gemini API Key in environment variables.");
+if (!MISTRAL_API_KEY) {
+  console.error("❌ Missing Mistral API Key in environment variables.");
   process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
 
 async function seedStandards() {
   console.log("🚀 Starting Indian Standards Seeder...");
@@ -76,8 +75,13 @@ async function seedStandards() {
          continue;
       }
       
-      const result = await embeddingModel.embedContent(embeddingText);
-      const embedding = result.embedding.values.slice(0, 768);
+      // mistral-embed returns 1024 dims; DB column is vector(768).
+      const [vector] = await embedTexts({
+        apiKey: MISTRAL_API_KEY,
+        model: MISTRAL_EMBEDDING_MODEL,
+        inputs: [embeddingText],
+      });
+      const embedding = vector.slice(0, 768);
 
       const { error } = await supabase
         .from('standards')

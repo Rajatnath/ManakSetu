@@ -1,103 +1,28 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { splitValueUnit } from '@/lib/requirements/normalize';
 import { extractPageTexts, isPageScanned } from '@/lib/ocr/pdfText';
 import { ocrPages } from '@/lib/ocr/mistral';
 import { writeProvenance, SourceMethod } from '@/lib/ocr/provenance';
+import { chatCompletionWithRetry, embedTexts } from '@/lib/llm/mistral';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-const EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001';
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || '';
+// Cheap default: Mistral Small (~$0.15/$0.60 per 1M tokens). Override with MISTRAL_MODEL.
+const MISTRAL_MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
+const MISTRAL_EMBEDDING_MODEL = process.env.MISTRAL_EMBEDDING_MODEL || 'mistral-embed';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-if (!GEMINI_API_KEY) {
-  console.warn('GEMINI_API_KEY is not set. Gemini requests will fail until it is configured.');
+if (!MISTRAL_API_KEY) {
+  console.warn('MISTRAL_API_KEY is not set. Analysis requests will fail until it is configured.');
 }
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-const GEMINI_MODEL_FALLBACKS = [
-  GEMINI_MODEL,
-  // Ordered by observed availability (probed 2026-10-13): 3.6/3.5-flash
-  // serve traffic while the newest 3.8/3.7 pool is capacity-exhausted (503).
-  // 'gemini-flash-latest' stays last — it usually aliases to the hot newest pool.
-  'gemini-3.6-flash',
-  'gemini-3.5-flash',
-  'gemini-flash-latest',
-].filter((value, index, array) => value && array.indexOf(value) === index);
-
-function getGeminiModel(modelName: string) {
-  return genAI.getGenerativeModel({ model: modelName });
-}
-
-function formatGeminiError(error: any) {
-  if (!error) return 'Unknown Gemini error';
-
-  const status = error.status ?? error.code ?? 'unknown';
-  const message = error.message || 'No details provided';
-
-  if (status === 404 || status === 400) {
-    return `Gemini model configuration error: ${message}. Check GEMINI_MODEL and GEMINI_API_KEY.`;
-  }
-
-  return `Gemini request failed (${status}): ${message}`;
-}
-
-async function generateContentWithRetry(prompt: any, inlineData?: any, maxRetries = 2) {
-  let lastError: any = null;
-  const triedModels: string[] = [];
-
-  for (const modelName of GEMINI_MODEL_FALLBACKS) {
-    let attempt = 0;
-    triedModels.push(modelName);
-
-    while (attempt < maxRetries) {
-      try {
-        const model = getGeminiModel(modelName);
-        const parts = inlineData ? [prompt, inlineData] : [prompt];
-        const result = await model.generateContent(parts);
-        return result;
-      } catch (error: any) {
-        lastError = error;
-
-        const status = error?.status ?? error?.code;
-        const isRetryable = status === 503 || status === 429 || status === 500;
-
-        if (isRetryable && attempt < maxRetries - 1) {
-          attempt++;
-          // Short backoff with jitter so we fail over fast (serverless-friendly)
-          // instead of burning 12s+ on an overloaded model before trying the next.
-          const delayMs = attempt * 2000 + Math.floor(Math.random() * 1000);
-          console.warn(`[${status}] Gemini ${modelName} is temporarily unavailable. Retrying in ${(delayMs / 1000).toFixed(1)}s...`);
-          await new Promise(res => setTimeout(res, delayMs));
-          continue;
-        }
-
-        if (status === 404 || status === 400) {
-          console.warn(`Gemini model ${modelName} is unavailable; trying fallback models...`);
-          break;
-        }
-
-        if (isRetryable) {
-          // Retries exhausted for this model but the error is transient —
-          // fail over to the next model instead of aborting the chain.
-          console.warn(`[${status}] Gemini ${modelName} still unavailable after ${maxRetries} attempts; trying fallback models...`);
-          break;
-        }
-
-        throw new Error(formatGeminiError(error));
-      }
-    }
-  }
-
-  const details = formatGeminiError(lastError);
-  throw new Error(`${details}. Tried models: ${triedModels.join(', ')}.`);
-}
+// Primary extraction model first, stronger (pricier) Medium as last-resort fallback.
+const CHAT_MODEL_FALLBACKS = [MISTRAL_MODEL, 'mistral-medium-latest'].filter(
+  (value, index, array) => value && array.indexOf(value) === index
+);
 
 const BASE_INSTRUCTIONS = `
   You are an expert procurement and technical standards extractor.
@@ -123,6 +48,7 @@ const BASE_INSTRUCTIONS = `
   ]
 
   Respond with ONLY the raw JSON array. Do not include markdown code block formatting like \`\`\`json.
+  If you find no measurable technical requirements, return [].
 `;
 
 async function failTender(tenderId: string, message: string, status = 503) {
@@ -172,14 +98,13 @@ export async function POST(request: Request) {
 
     let useOcr = false;
     let ocrPagesDone: number[] = [];
-    let geminiPrompt: string;
-    let geminiInlineData: any = undefined;
 
-    if (scannedPages.length === 0) {
-      // Normal path — unchanged: the PDF itself goes to Gemini.
-      geminiPrompt = BASE_INSTRUCTIONS;
-      geminiInlineData = { inlineData: { data: pdfBuffer.toString('base64'), mimeType: 'application/pdf' } };
-    } else {
+    // Mistral chat takes text, not a PDF blob — so the tender text is always
+    // assembled page by page (native PDF text + OCR only for scanned pages).
+    let merged: { page: number; text: string; method: SourceMethod }[] =
+      pageTexts.map(p => ({ page: p.page, text: p.text, method: 'pdf_text' as SourceMethod }));
+
+    if (scannedPages.length > 0) {
       // OCR fallback — only for pages with no usable native text.
       if (!MISTRAL_API_KEY) {
         return failTender(
@@ -207,15 +132,16 @@ export async function POST(request: Request) {
       }
 
       const ocrByPage = new Map(ocrResults.map(r => [r.page, r.markdown]));
-      const merged = pageTexts.map(p => {
+      merged = pageTexts.map(p => {
         if (!isPageScanned(p.text)) return { page: p.page, text: p.text, method: 'pdf_text' as SourceMethod };
         pageMethods[p.page] = 'ocr';
         ocrPagesDone.push(p.page);
         return { page: p.page, text: ocrByPage.get(p.page) || '', method: 'ocr' as SourceMethod };
       });
       useOcr = true;
+    }
 
-      geminiPrompt = `
+    const extractionPrompt = `
       ${BASE_INSTRUCTIONS}
 
       The tender text below was assembled page by page. Native PDF text was used where available;
@@ -225,51 +151,74 @@ export async function POST(request: Request) {
 
       ${merged.map(m => `[Page ${m.page} — ${m.method === 'ocr' ? 'OCR text' : 'PDF text'}]\n${m.text}`).join('\n\n')}
     `;
-    }
 
     let extractedReqs: any[] = [];
 
     try {
-      const result = await generateContentWithRetry(geminiPrompt, geminiInlineData);
+      const content = await chatCompletionWithRetry({
+        apiKey: MISTRAL_API_KEY,
+        models: CHAT_MODEL_FALLBACKS,
+        messages: [{ role: 'user', content: extractionPrompt }],
+      });
 
-      let textResp = result.response.text().trim();
-      if (textResp.startsWith('```json')) {
+      let textResp = content.trim();
+      if (textResp.startsWith('```')) {
         textResp = textResp.replace(/```json/g, '').replace(/```/g, '').trim();
+      }
+      // Tolerate prose around the array (smaller models sometimes add a preamble).
+      const arrayStart = textResp.indexOf('[');
+      const arrayEnd = textResp.lastIndexOf(']');
+      if (arrayStart !== -1 && arrayEnd > arrayStart) {
+        textResp = textResp.slice(arrayStart, arrayEnd + 1);
       }
 
       extractedReqs = JSON.parse(textResp);
+      if (!Array.isArray(extractedReqs)) throw new Error('Model did not return a JSON array.');
     } catch (err: any) {
-      console.error('Gemini extraction failed:', err);
+      console.error('Mistral extraction failed:', err);
       await supabase.from('tenders').update({ status: 'analysis_failed' }).eq('id', tender.id);
+      const rateLimited = err?.status === 429;
       return NextResponse.json({
-        error: 'Gemini AI is temporarily overloaded (all fallback models were tried). Please wait about a minute and retry analysis.',
+        error: rateLimited
+          ? 'Mistral AI rate limit reached. Please wait a few minutes and retry analysis (or raise the limits on your Mistral API plan).'
+          : 'Mistral AI is temporarily unavailable. Please try again later or check the service status.',
         retryable: true,
-      }, { status: 503 });
+      }, { status: rateLimited ? 429 : 503 });
     }
 
     console.log(`Extracted ${extractedReqs.length} requirements (ocr=${useOcr})`);
 
-    // Generate Embeddings and Insert
+    // Generate Embeddings and Insert (batched: one mistral-embed call for all rows)
     const requirementMethods: Record<string, SourceMethod> = {};
-    for (const req of extractedReqs) {
-      if (!req.requirement || !req.value) continue;
+    const validReqs = extractedReqs.filter((req) => req?.requirement && req?.value);
 
-      // Normalize so value and unit never duplicate (e.g. value "25", unit "MPa")
+    // Normalize so value and unit never duplicate (e.g. value "25", unit "MPa")
+    for (const req of validReqs) {
       const normalized = splitValueUnit(req.value, req.unit);
       req.value = normalized.value;
       req.unit = normalized.unit;
+    }
 
-      const embedText = `${req.category} | ${req.requirement} | ${req.value} | ${req.source_text}`;
-      let embedding = new Array(768).fill(0);
-
+    let embeddings: number[][] = validReqs.map(() => new Array(768).fill(0));
+    if (validReqs.length > 0) {
       try {
-        const embeddingModel = getGeminiModel(EMBEDDING_MODEL);
-        const embedResp = await embeddingModel.embedContent(embedText);
-        embedding = embedResp.embedding.values.slice(0, 768);
+        const vectors = await embedTexts({
+          apiKey: MISTRAL_API_KEY,
+          model: MISTRAL_EMBEDDING_MODEL,
+          inputs: validReqs.map(
+            (req) => `${req.category} | ${req.requirement} | ${req.value} | ${req.source_text}`
+          ),
+        });
+        // mistral-embed is 1024 dims; DB stores vector(768) — truncate like before.
+        embeddings = vectors.map((v) => v.slice(0, 768));
       } catch (embedErr) {
         console.warn('Embedding failed, using zero vector fallback:', embedErr);
       }
+    }
 
+    for (let i = 0; i < validReqs.length; i++) {
+      const req = validReqs[i];
+      const embedding = embeddings[i];
       const { data: inserted } = await supabase.from('tender_requirements').insert({
         tender_id: tender.id,
         category: req.category,
