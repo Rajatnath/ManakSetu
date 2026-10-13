@@ -47,7 +47,7 @@ Real stage-by-stage flow:
 # 4. REQUIREMENT EXTRACTION
 
 1. **LLM? Yes.** `src/app/api/analyze/route.ts:129` sends the whole PDF as base64 `inlineData{mimeType:"application/pdf"}` to Gemini.
-2. **Model:** `GEMINI_MODEL` env or default `'gemini-3.8-flash'` (`:8`), with fallbacks `['gemini-2.0-flash','gemini-1.5-flash','gemini-1.5-pro']` (`:19-24`). Retry: up to 3 attempts on 429/500/503 with 4s×attempt backoff; 404/400 → next fallback model (`generateContentWithRetry`, `:43-78`).
+2. **Model:** `GEMINI_MODEL` env or default `'gemini-3.8-flash'` (`:12`), with fallbacks `['gemini-3.6-flash','gemini-3.5-flash','gemini-flash-latest']` (`:24-33`). Retry: up to 2 attempts per model on 429/500/503 with ~2s base backoff + jitter, then fail over to the next model; 404/400 → next fallback model (`generateContentWithRetry`, `:55-98`).
 3. **Prompt visible? Yes**, verbatim at `:105-123`: "You are an expert procurement and technical standards extractor… Return the results as a JSON array… Respond with ONLY the raw JSON array."
 4. **Schema enforcement:** weak. Strips ```` ```json ```` fences (`:132-134`), then bare `JSON.parse` (`:136`). No Zod/schema validation; rows with falsy `requirement`/`value` are skipped (`:149`).
 5. **No unit normalization** — `unit` is free LLM text. **No confidence** — `confidence` column exists in DB but is never written. **No product/material/electrical/structural categorization logic** — `category` is free LLM text (prompt example: "Electrical / Physical / Safety / etc").
@@ -132,7 +132,7 @@ Brutally honest: **fully static demo widget.**
 
 | Model / Service | Purpose | Input | Output | Where called | Status |
 |---|---|---|---|---|---|
-| Gemini generative (`GEMINI_MODEL` default `gemini-3.8-flash`; fallbacks 2.0-flash/1.5-flash/1.5-pro) | Tender requirement extraction | Full PDF as base64 inlineData + prompt | JSON array `{category, requirement, value, unit, source_text, page_number}` | `api/analyze/route.ts:129` | **Live, working** (retry+fallback implemented) |
+| Gemini generative (`GEMINI_MODEL` default `gemini-3.8-flash`; fallbacks 3.6-flash/3.5-flash/flash-latest) | Tender requirement extraction | Full PDF as base64 inlineData + prompt | JSON array `{category, requirement, value, unit, source_text, page_number}` | `api/analyze/route.ts` | **Live, working** (retry+fallback implemented) |
 | `gemini-embedding-001` | Embed requirements + standards | requirement pipe-string / standard `embedding_text` | float vector, truncated to 768 | `api/analyze/route.ts:154-160`, `scripts/seed_standards.ts:79-80` | **Live**; failure → silent **zero-vector** fallback |
 | Mistral OCR (`@mistralai/mistralai ^2.7.0` in `package.json`) | Intended scanned-PDF OCR | — | — | nowhere in `src/` (grep: zero hits) | **Installed, never called** |
 | Sarvam AI | Intended EN↔HI dynamic translation | — | — | nowhere in `src/` | **Absent** (key may exist in env; no code) |

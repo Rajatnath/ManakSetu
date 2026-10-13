@@ -23,9 +23,12 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 const GEMINI_MODEL_FALLBACKS = [
   GEMINI_MODEL,
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-pro'
+  // Ordered by observed availability (probed 2026-10-13): 3.6/3.5-flash
+  // serve traffic while the newest 3.8/3.7 pool is capacity-exhausted (503).
+  // 'gemini-flash-latest' stays last — it usually aliases to the hot newest pool.
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
 ].filter((value, index, array) => value && array.indexOf(value) === index);
 
 function getGeminiModel(modelName: string) {
@@ -45,11 +48,13 @@ function formatGeminiError(error: any) {
   return `Gemini request failed (${status}): ${message}`;
 }
 
-async function generateContentWithRetry(prompt: any, inlineData?: any, maxRetries = 3) {
+async function generateContentWithRetry(prompt: any, inlineData?: any, maxRetries = 2) {
   let lastError: any = null;
+  const triedModels: string[] = [];
 
   for (const modelName of GEMINI_MODEL_FALLBACKS) {
     let attempt = 0;
+    triedModels.push(modelName);
 
     while (attempt < maxRetries) {
       try {
@@ -65,8 +70,11 @@ async function generateContentWithRetry(prompt: any, inlineData?: any, maxRetrie
 
         if (isRetryable && attempt < maxRetries - 1) {
           attempt++;
-          console.warn(`[${status}] Gemini ${modelName} is temporarily unavailable. Retrying in ${attempt * 4} seconds...`);
-          await new Promise(res => setTimeout(res, attempt * 4000));
+          // Short backoff with jitter so we fail over fast (serverless-friendly)
+          // instead of burning 12s+ on an overloaded model before trying the next.
+          const delayMs = attempt * 2000 + Math.floor(Math.random() * 1000);
+          console.warn(`[${status}] Gemini ${modelName} is temporarily unavailable. Retrying in ${(delayMs / 1000).toFixed(1)}s...`);
+          await new Promise(res => setTimeout(res, delayMs));
           continue;
         }
 
@@ -75,12 +83,20 @@ async function generateContentWithRetry(prompt: any, inlineData?: any, maxRetrie
           break;
         }
 
+        if (isRetryable) {
+          // Retries exhausted for this model but the error is transient —
+          // fail over to the next model instead of aborting the chain.
+          console.warn(`[${status}] Gemini ${modelName} still unavailable after ${maxRetries} attempts; trying fallback models...`);
+          break;
+        }
+
         throw new Error(formatGeminiError(error));
       }
     }
   }
 
-  throw new Error(formatGeminiError(lastError));
+  const details = formatGeminiError(lastError);
+  throw new Error(`${details}. Tried models: ${triedModels.join(', ')}.`);
 }
 
 const BASE_INSTRUCTIONS = `
@@ -226,7 +242,8 @@ export async function POST(request: Request) {
       console.error('Gemini extraction failed:', err);
       await supabase.from('tenders').update({ status: 'analysis_failed' }).eq('id', tender.id);
       return NextResponse.json({
-        error: 'Gemini AI is temporarily unavailable. Please try again later or check the service status.'
+        error: 'Gemini AI is temporarily overloaded (all fallback models were tried). Please wait about a minute and retry analysis.',
+        retryable: true,
       }, { status: 503 });
     }
 
